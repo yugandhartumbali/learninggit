@@ -1,0 +1,99 @@
+[Test]
+[Category("Regression")]
+public async Task DownloadedFile_ShouldBeSavedSuccessfully()
+{
+    var loginPage = new LoginPage(Page!);
+    var sqlPage = new SQLViewPage(Page!);
+    var softAssert = new SoftAssert(Page);
+
+    // ---------------- LOGIN ----------------
+    await StepHelper.Execute("Navigate to Login Page", async () =>
+    {
+        await loginPage.NavigateAsync(BaseUrl);
+    }, Page);
+
+    var creds = CredentialProvider.GetCredential("WK", RoleType.Regular);
+
+    await StepHelper.Execute("Login to Application", async () =>
+    {
+        await loginPage.LoginAsync(creds.Username, creds.Password);
+    }, Page);
+
+    // ---------------- NAVIGATE TO SQL VIEW ----------------
+    await StepHelper.Execute("Open SQL View Page", async () =>
+    {
+        await sqlPage.NavigateToSQLViewAsync();
+    }, Page);
+
+    string query = "select top 20 * from rutting";
+
+    await StepHelper.Execute("Enter SQL Query", async () =>
+    {
+        await sqlPage.EnterQueryAsync(query);
+    }, Page);
+
+    await StepHelper.Execute("Set Network Filter", async () =>
+    {
+        await sqlPage.SetRestrictAsync(false);
+        await sqlPage.SelectNetworkAsync("(NOC) NORTHLAND");
+        await sqlPage.ClickRetrieveAsync();
+    }, Page);
+
+    // ---------------- DOWNLOAD FILE ----------------
+    string projectRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, @"..\..\..\")
+    );
+
+    string downloadFolder = Path.Combine(projectRoot, "TestData");
+
+    string filePath = await StepHelper.Execute(
+        "Download Grid Data",
+        async () => await sqlPage.DownloadGridDataAsync(downloadFolder),
+        Page
+    );
+
+    // HARD ASSERT (file must exist)
+    AssertHelper.IsTrue(File.Exists(filePath), "Downloaded File Exists");
+
+    // ---------------- READ EXCEL ----------------
+    var excelData = await StepHelper.Execute(
+        "Read Excel Data",
+        async () =>
+        {
+            return DataReaderHelper.ReadExcelData<DownloadedFileCheck>(
+                filePath,
+                "SelectData"
+            );
+        },
+        Page
+    );
+
+    AssertHelper.IsNotNull(excelData, "Excel Data");
+
+    // ---------------- READ DATABASE ----------------
+    var dbData = await StepHelper.Execute(
+        "Fetch Data From Database",
+        async () => await DbService.GetQueryResult(query),
+        Page
+    );
+
+    AssertHelper.IsNotNull(dbData, "Database Data");
+
+    // ---------------- DATA VALIDATION ----------------
+    await StepHelper.Execute(
+     "Validate Excel vs Database Data",
+     async () =>
+     {
+         ExcelDataValidationHelper.CompareExcelWithDb(
+             excelData,
+             dbData
+         );
+
+         await Task.CompletedTask;
+     },
+     Page
+ );
+
+    // ---------------- FINAL ASSERT ----------------
+    softAssert.AssertAll();
+}
